@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Http;
 
 class NotificationService
 {
@@ -12,17 +13,33 @@ class NotificationService
      */
     public function sendSms(string $to, string $message): bool
     {
+        // Aggressively clean the phone number: remove spaces, dashes, parentheses, and +
+        $to = preg_replace('/[\s\-\(\)\+]+/', '', $to);
+
+        // Format Nigerian numbers properly for Termii (e.g. 090... -> 23490...)
+        if (str_starts_with($to, '0') && strlen($to) === 11) {
+            $to = '234' . substr($to, 1);
+        }
+
         try {
-            $httpClient = new \Twilio\Http\CurlClient([CURLOPT_SSL_VERIFYPEER => false]);
-            $twilio = new \Twilio\Rest\Client(env('TWILIO_SID'), env('TWILIO_TOKEN'), null, null, $httpClient);
-            $twilio->messages->create($to, [
-                'from' => env('TWILIO_FROM'),
-                'body' => $message,
+            $response = Http::withOptions(['verify' => false])->post('https://api.ng.termii.com/api/sms/send', [
+                'to' => $to,
+                'from' => env('TERMII_SENDER_ID', 'N-Alert'),
+                'sms' => $message,
+                'type' => 'plain',
+                'channel' => 'generic',
+                'api_key' => env('TERMII_API_KEY'),
             ]);
-            Log::info("SMS Sent [{$to}]: {$message}");
-            return true;
+
+            if ($response->successful()) {
+                Log::info("Termii SMS Sent [{$to}]: {$message}");
+                return true;
+            } else {
+                Log::error("Termii SMS Failed: " . $response->body());
+                return false;
+            }
         } catch (\Exception $e) {
-            Log::error("Twilio SMS Failed: " . $e->getMessage());
+            Log::error("Termii SMS Exception: " . $e->getMessage());
             return false;
         }
     }
