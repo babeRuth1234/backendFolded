@@ -39,13 +39,11 @@ class JobController extends Controller
 
         $jobs = $query->get()->map(fn($job) => $this->formatJob($job));
 
-        // Sorting
-        $filter = $request->filter ?? 'urgency';
-        $jobs = match ($filter) {
-            'price'    => $jobs->sortByDesc('total_price')->values(),
-            'quantity' => $jobs->sortByDesc('total_items')->values(),
-            default    => $jobs->sortBy('return_date')->values(), // urgency
-        };
+        // Strict Queue Sorting: Active jobs first, ordered chronologically (oldest first). Completed jobs last.
+        $jobs = $jobs->sortBy(function($job) {
+            if ($job['status'] === 'completed') return 'Z_' . $job['created_at'];
+            return 'A_' . $job['created_at'];
+        })->values();
 
         $active   = Job::whereNotIn('status', ['completed'])->count();
         $dueToday = Job::whereNotIn('status', ['completed'])
@@ -91,7 +89,7 @@ class JobController extends Controller
         $discountPct     = 0;
         $discountApplied = 0;
         if ($user->is_new_customer) {
-            $discountPct     = (float) Setting::where('key', 'new_customer_discount')->value('value') ?? 10;
+            $discountPct     = (float) (Setting::where('key', 'new_customer_discount')->value('value') ?? 10);
             $discountApplied = round($subtotal * ($discountPct / 100), 2);
         }
 
@@ -102,7 +100,7 @@ class JobController extends Controller
         $job = Job::create([
             'user_id'          => (string) $user->_id,
             'order_ref'        => $orderRef,
-            'status'           => 'in_progress',
+            'status'           => 'intake',
             'items'            => $items,
             'subtotal'         => $subtotal,
             'discount_applied' => $discountApplied,
@@ -118,6 +116,9 @@ class JobController extends Controller
 
         // Notify client
         $this->notifier->notifyJobCreated($user, $job);
+
+        // Try to auto-advance queue
+        $this->autoAdvanceQueue();
 
         $formattedJob = $this->formatJob($job->load('user'));
         JobUpdated::dispatch($formattedJob);
@@ -136,6 +137,9 @@ class JobController extends Controller
         $user = User::findOrFail($job->user_id);
         $this->notifier->notifyJobReady($user, $job);
 
+        // Auto-advance the next job in the queue
+        $this->autoAdvanceQueue();
+
         $formattedJob = $this->formatJob($job->load('user'));
         JobUpdated::dispatch($formattedJob);
 
@@ -149,6 +153,22 @@ class JobController extends Controller
     {
         $job = Job::with('user')->findOrFail($id);
         return response()->json($this->formatJob($job));
+    }
+
+    /**
+     * Auto-advance the queue: If no job is in_progress, take the oldest intake job and make it in_progress.
+     */
+    private function autoAdvanceQueue()
+    {
+        $hasInProgress = Job::where('status', 'in_progress')->exists();
+        if (!$hasInProgress) {
+            $nextJob = Job::where('status', 'intake')->orderBy('created_at', 'asc')->first();
+            if ($nextJob) {
+                $nextJob->update(['status' => 'in_progress']);
+                $formattedJob = $this->formatJob($nextJob->load('user'));
+                JobUpdated::dispatch($formattedJob);
+            }
+        }
     }
 
     // ------------------------------------------------
@@ -168,6 +188,7 @@ class JobController extends Controller
             'total_price'      => $job->total_price,
             'return_date'      => $job->return_date,
             'pickup_window'    => $job->pickup_window,
+
             'client'           => $job->user ? [
                 'id'    => (string) $job->user->_id,
                 'name'  => $job->user->name,

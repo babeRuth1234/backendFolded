@@ -3,7 +3,6 @@
 namespace App\Services;
 
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Http;
 
 class NotificationService
 {
@@ -16,30 +15,26 @@ class NotificationService
         // Aggressively clean the phone number: remove spaces, dashes, parentheses, and +
         $to = preg_replace('/[\s\-\(\)\+]+/', '', $to);
 
-        // Format Nigerian numbers properly for Termii (e.g. 090... -> 23490...)
+        // Format Nigerian numbers properly for Twilio (e.g. 090... -> +23490...)
         if (str_starts_with($to, '0') && strlen($to) === 11) {
-            $to = '234' . substr($to, 1);
+            $to = '+234' . substr($to, 1);
+        } elseif (!str_starts_with($to, '+')) {
+            // Just in case they typed 23490... without the plus
+            $to = '+' . ltrim($to, '+');
         }
 
         try {
-            $response = Http::withOptions(['verify' => false])->post('https://api.ng.termii.com/api/sms/send', [
-                'to' => $to,
-                'from' => env('TERMII_SENDER_ID', 'N-Alert'),
-                'sms' => $message,
-                'type' => 'plain',
-                'channel' => 'generic',
-                'api_key' => env('TERMII_API_KEY'),
+            $httpClient = new \Twilio\Http\CurlClient([CURLOPT_SSL_VERIFYPEER => false]);
+            $twilio = new \Twilio\Rest\Client(env('TWILIO_SID'), env('TWILIO_TOKEN'), null, null, $httpClient);
+            $twilio->messages->create('whatsapp:' . $to, [
+                'from' => 'whatsapp:' . env('TWILIO_FROM'),
+                'body' => $message,
             ]);
-
-            if ($response->successful()) {
-                Log::info("Termii SMS Sent [{$to}]: {$message}");
-                return true;
-            } else {
-                Log::error("Termii SMS Failed: " . $response->body());
-                return false;
-            }
+            
+            Log::info("Twilio WhatsApp Sent [{$to}]: {$message}");
+            return true;
         } catch (\Exception $e) {
-            Log::error("Termii SMS Exception: " . $e->getMessage());
+            Log::error("Twilio WhatsApp Failed: " . $e->getMessage());
             return false;
         }
     }
@@ -63,7 +58,7 @@ class NotificationService
     {
         $orderRef = strtoupper(substr((string) $job->_id, -6));
         $total    = number_format($job->total_price, 2);
-        $url      = env('APP_URL') . '/client/dashboard';
+        $url      = env('FRONTEND_URL') . '/client/dashboard';
         $message  = "Welcome to Folded! Your laundry order #{$orderRef} has been received. "
                   . "Total: \${$total}. Track your laundry at: {$url}";
 
@@ -81,7 +76,7 @@ class NotificationService
     public function notifyJobReady(\App\Models\User $client, \App\Models\Job $job): void
     {
         $orderRef = strtoupper(substr((string) $job->_id, -6));
-        $url      = env('APP_URL') . '/client/dashboard';
+        $url      = env('FRONTEND_URL') . '/client/dashboard';
         $message  = "Great news! Your laundry order #{$orderRef} is clean and ready for pickup. "
                   . "Visit: {$url} to confirm.";
 

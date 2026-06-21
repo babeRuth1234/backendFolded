@@ -68,6 +68,8 @@ Route::middleware(['auth:sanctum'])->prefix('client')->group(function () {
     Route::delete('/me',   [AuthController::class, 'destroy']);
 
     // Jobs
+    Route::get('/queue',       [ClientJobController::class, 'queue']);
     Route::get('/jobs',        [ClientJobController::class, 'index']);
     Route::get('/jobs/{id}',   [ClientJobController::class, 'show']);
+
 });

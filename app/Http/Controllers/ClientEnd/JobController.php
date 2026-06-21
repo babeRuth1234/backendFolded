@@ -32,6 +32,26 @@ class JobController extends Controller
         return response()->json($this->formatJob($job));
     }
 
+    /**
+     * Get the public queue of all active jobs.
+     */
+    public function queue(Request $request)
+    {
+        $jobs = Job::whereNotIn('status', ['completed'])
+            ->orderBy('created_at', 'asc')
+            ->get()
+            ->map(function ($job) {
+                return [
+                    'id' => (string) $job->_id,
+                    'user_id' => $job->user_id,
+                    'status' => $job->status,
+                    'created_at' => $job->created_at,
+                ];
+            });
+
+        return response()->json($jobs);
+    }
+
     private function formatJob(Job $job): array
     {
         return [
@@ -45,6 +65,7 @@ class JobController extends Controller
             'discount_applied' => $job->discount_applied,
             'return_date'      => $job->return_date,
             'pickup_window'    => $job->pickup_window,
+
             'created_at'       => $job->created_at,
         ];
     }

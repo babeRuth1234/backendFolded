@@ -11,7 +11,8 @@
         "laravel/reverb": "*",
         "laravel/sanctum": "^4.3",
         "laravel/tinker": "^3.0",
-        "mongodb/laravel-mongodb": "^5.7"
+        "mongodb/laravel-mongodb": "^5.7",
+        "twilio/sdk": "^8.11"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",
